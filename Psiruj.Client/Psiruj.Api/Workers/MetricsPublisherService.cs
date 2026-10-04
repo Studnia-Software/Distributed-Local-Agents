@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Psiruj.Api.Abstractions;
 
@@ -7,11 +10,16 @@ public class MetricsPublisherService : BackgroundService
 {
     private readonly ILogger<MetricsPublisherService> _logger;
     private IMetricsGathererService _gathererService;
+    private readonly IConfiguration _configuration;
     
-    public MetricsPublisherService(ILogger<MetricsPublisherService> logger, IMetricsGathererService gathererService)
+    public MetricsPublisherService(
+        ILogger<MetricsPublisherService> logger,
+        IMetricsGathererService gathererService,
+        IConfiguration configuration)
     {
         _logger = logger;
         _gathererService = gathererService;
+        _configuration = configuration;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -24,16 +32,19 @@ public class MetricsPublisherService : BackgroundService
         {
             try
             {
-                var payload = _gathererService.GatherMetrics();
+                var payload = JsonSerializer.Serialize(
+                    _gathererService.GatherMetrics(),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
                 
-                _logger.LogInformation(JsonSerializer.Serialize(payload));
+                _logger.LogInformation(payload);
+
+                var host = _configuration["AxeAi:UdpHost"] ?? "127.0.0.1";
+                var port = _configuration.GetValue("AxeAi:UdpPort", 9090);
+                var endpoint = new IPEndPoint(IPAddress.Parse(host), port);
+                using var server = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                 
-                // var response = await _httpClient.PostAsJsonAsync("https://twoje-zewnetrzne-api.com/api/metrics", payload, stoppingToken);
-                
-                // if (!response.IsSuccessStatusCode)
-                // {
-                //     _logger.LogWarning("Nie udało się wysłać metryk. Kod HTTP: {StatusCode}", response.StatusCode);
-                // }
+                var data = Encoding.ASCII.GetBytes(payload);
+                server.SendTo(data, data.Length, SocketFlags.None, endpoint);
             }
             catch (HttpRequestException ex)
             {

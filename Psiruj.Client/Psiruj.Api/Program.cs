@@ -9,6 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services.AddControllers();
+builder.Services.AddHttpClient();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -39,8 +40,9 @@ builder.Services.AddSingleton<IGpuMetricsProvider>(sp =>
 });
 
 builder.Services.AddSingleton<IMetricsGathererService, MetricsGathererService>();
+builder.Services.AddScoped<ITaskExecutor, OllamaTaskExecutor>();
 
-builder.Services.AddHostedService<MetricsPublisherService>();
+builder.Services.AddHostedService<AxeAiNodeService>();
 
 var app = builder.Build();
 

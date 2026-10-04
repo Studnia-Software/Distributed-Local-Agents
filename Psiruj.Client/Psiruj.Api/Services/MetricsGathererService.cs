@@ -40,6 +40,8 @@ public class MetricsGathererService : IMetricsGathererService
 
         return new ExternalMetricsPayloadDto
         {
+            Type = "heartbeat",
+            NodeId = Environment.MachineName,
             FreeCpuPercentage = Math.Round(freeCpu, 2),
             FreeRamMb = Math.Round(freeRamMb, 2),
             FreeGpuPercentage = Math.Round(freeGpuPercentage, 2),
