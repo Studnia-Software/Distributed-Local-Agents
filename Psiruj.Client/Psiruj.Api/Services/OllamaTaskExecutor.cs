@@ -56,16 +56,25 @@ public sealed class OllamaTaskExecutor : ITaskExecutor
         var gpuDeviceId = _configuration["Ollama:GpuDeviceId"] ?? "0";
         if (enableGpu)
         {
+            var llmLibrary = _configuration["Ollama:LlmLibrary"] ?? "cuda_v12";
+            containerBuilder = containerBuilder
+                .WithEnvironment("NVIDIA_VISIBLE_DEVICES", gpuDeviceId)
+                .WithEnvironment("NVIDIA_DRIVER_CAPABILITIES", "compute,utility")
+                .WithEnvironment("OLLAMA_LLM_LIBRARY", llmLibrary)
+                .WithEnvironment("OLLAMA_DEBUG", "1");
+
             containerBuilder = containerBuilder.WithCreateParameterModifier(parameters =>
             {
-                parameters.HostConfig ??= new HostConfig();
                 parameters.HostConfig ??= new HostConfig();
                 parameters.HostConfig.DeviceRequests = new List<DeviceRequest>
                 {
                     new()
                     {
                         Driver = "nvidia",
-                        DeviceIDs = new List<string> { gpuDeviceId }, // Target specific GPU (e.g., "0")
+                        DeviceIDs = string.IsNullOrWhiteSpace(gpuDeviceId)
+                            ? null
+                            : new List<string> { gpuDeviceId },
+                        Count = string.IsNullOrWhiteSpace(gpuDeviceId) ? -1 : 0,
                         Capabilities = new List<IList<string>>
                         {
                             new List<string> { "gpu" }
@@ -82,7 +91,8 @@ public sealed class OllamaTaskExecutor : ITaskExecutor
 
             _logger.LogInformation("Starting Ollama container {Image} for task {TaskId} using model {Model}",
                 image, request.TaskId, model);
-            _logger.LogInformation("Ollama GPU acceleration requested: {EnableGpu}", enableGpu);
+            _logger.LogInformation("Ollama GPU acceleration requested: {EnableGpu}, device: {GpuDeviceId}",
+                enableGpu, string.IsNullOrWhiteSpace(gpuDeviceId) ? "all" : gpuDeviceId);
             await container.StartAsync(cancellationToken);
 
             var client = _httpClientFactory.CreateClient();
@@ -93,6 +103,7 @@ public sealed class OllamaTaskExecutor : ITaskExecutor
             _logger.LogInformation("Ollama container is ready for task {TaskId}; pulling model {Model}",
                 request.TaskId, model);
             await PullModelAsync(client, model, cancellationToken);
+            await LogLoadedModelProcessorAsync(client, request.TaskId, cancellationToken);
             _logger.LogInformation("Model {Model} is ready for task {TaskId}; generating response", model, request.TaskId);
             var result = await GenerateAsync(client, model, request.Payload, request.TaskId, cancellationToken);
 
@@ -118,6 +129,39 @@ public sealed class OllamaTaskExecutor : ITaskExecutor
             new OllamaPullRequest(model, false),
             cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    private async Task LogLoadedModelProcessorAsync(
+        HttpClient client,
+        string taskId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync("/api/ps", cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var models = document.RootElement.TryGetProperty("models", out var loadedModels)
+            ? loadedModels
+            : default;
+
+        if (models.ValueKind != JsonValueKind.Array || models.GetArrayLength() == 0)
+        {
+            _logger.LogWarning("Ollama has no loaded model reported for task {TaskId}", taskId);
+            return;
+        }
+
+        foreach (var loadedModel in models.EnumerateArray())
+        {
+            var name = loadedModel.TryGetProperty("name", out var nameValue)
+                ? nameValue.GetString()
+                : "unknown";
+            var processor = loadedModel.TryGetProperty("processor", out var processorValue)
+                ? processorValue.GetString()
+                : "unknown";
+            _logger.LogInformation("Ollama loaded model {Model} on processor {Processor} for task {TaskId}",
+                name, processor, taskId);
+        }
     }
 
     private async Task<string> GenerateAsync(

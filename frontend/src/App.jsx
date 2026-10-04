@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 const defaultPrompt = "Napisz krotkie powitanie dla zespolu.";
-const defaultModel = "qwen2.5:0.5b";
+const defaultModel = "llama3.2:1b";
 
 async function readError(response) {
   const body = await response.text();
