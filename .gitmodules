@@ -1,0 +1,3 @@
+[submodule "axe_ai_backend"]
+	path = axe_ai_backend
+	url = https://github.com/nose15/axe_ai_backend
